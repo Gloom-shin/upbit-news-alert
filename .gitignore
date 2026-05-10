@@ -1,0 +1,15 @@
+.env
+.env.local
+.env.*.local
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+.DS_Store
+data/*.db
+data/*.db-journal
+data/app.log*
+*.log
+.vscode/
+.idea/

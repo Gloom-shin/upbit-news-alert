@@ -1,0 +1,20 @@
+version: "3.9"
+
+services:
+  app:
+    image: upbit-news-alert
+    container_name: upbit-news-alert
+    build: .
+    env_file:
+      - .env
+    environment:
+      - DB_PATH=/app/data/alerts.db
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    # 인바운드 포트 필요 없음 (알림 봇)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3,os; sqlite3.connect(os.environ.get('DB_PATH','/app/data/alerts.db')).close()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3

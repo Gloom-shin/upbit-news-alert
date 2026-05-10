@@ -1,0 +1,52 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            REPO_DIR=/home/${{ secrets.EC2_USER }}/upbit-news-alert
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              echo "초기 클론..."
+              cd /home/${{ secrets.EC2_USER }}
+              git clone https://github.com/${{ github.repository }}.git upbit-news-alert
+            fi
+            cd "$REPO_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+
+            # .env 는 EC2에 따로 보관됨. 없으면 부팅 실패하므로 안내.
+            if [ ! -f ".env" ]; then
+              echo "❌ .env 파일이 EC2에 없습니다. /home/${{ secrets.EC2_USER }}/upbit-news-alert/.env 를 먼저 생성하세요."
+              exit 1
+            fi
+
+            docker build -t upbit-news-alert .
+            docker compose up -d
+            sleep 5
+            docker compose ps
+
+      - name: Show boot logs
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/${{ secrets.EC2_USER }}/upbit-news-alert
+            docker logs upbit-news-alert --tail 30 || true
