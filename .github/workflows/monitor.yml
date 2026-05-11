@@ -1,0 +1,81 @@
+name: Monitor Upbit
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_MODEL: claude-haiku-4-5-20251001
+      GMAIL_USER: ${{ secrets.GMAIL_USER }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: '587'
+      MIN_CONSECUTIVE_UP_DAYS: '2'
+      MAX_CONSECUTIVE_UP_DAYS: '3'
+      COINNESS_RSS: https://coinness.com/feed
+      TOKENPOST_RSS: https://www.tokenpost.kr/rss
+      NEWS_HTTP_TIMEOUT: '15'
+      TRAILING_DROP_THRESHOLD: '0.07'
+      CONSECUTIVE_RED_DAYS: '2'
+      DRY_RUN: 'false'
+      LOG_LEVEL: INFO
+      TZ: Asia/Seoul
+      DB_PATH: data/alerts.db
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Restore SQLite state
+        id: cache-db
+        uses: actions/cache@v4
+        with:
+          path: data/alerts.db
+          key: alerts-db-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            alerts-db-
+
+      - name: Ensure data dir
+        run: mkdir -p data
+
+      - name: Price job
+        run: python -m app.main --once price
+        continue-on-error: true
+
+      - name: News job
+        run: python -m app.main --once news
+        continue-on-error: true
+
+      - name: Daily tracking (idempotent)
+        run: python -m app.main --once track
+        continue-on-error: true
+
+      - name: Upload DB artifact (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alerts-db-${{ github.run_id }}
+          path: data/alerts.db
+          if-no-files-found: ignore
+          retention-days: 7
