@@ -1,0 +1,45 @@
+name: Test Email
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GMAIL_USER: ${{ secrets.GMAIL_USER }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: '587'
+      DRY_RUN: 'false'
+      LOG_LEVEL: INFO
+      TZ: Asia/Seoul
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Send test email
+        run: |
+          python - <<'PY'
+          from app.notifier import send_email
+          subject = "[upbit-alert] 파이프라인 테스트 - Gmail SMTP 정상"
+          body = """안녕하세요!
+
+  upbit-news-alert 서비스의 알림 파이프라인 테스트 이메일입니다.
+
+  - Gmail SMTP 인증 OK
+  - GitHub Actions 러너에서 Gmail로 발송 가능
+  - 본인 메일주소로 정상 수신
+
+  이제 진짜 S/A급 호재가 매칭되면 같은 채널로 알림이 도착합니다.
+
+  - upbit-news-alert via GitHub Actions
+  """
+          ok = send_email(subject, body)
+          import sys
+          sys.exit(0 if ok else 1)
+          PY
