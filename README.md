@@ -5,7 +5,24 @@
 이후 매일 자정 KST에 4가지 종료 기준(첫 음봉 / 트레일링 -7% / 본전 이탈 / 연속 2일 음봉)을 추적해
 SQLite에 기록하고, `python -m app.report` 로 등급별 평균 상승 지속일을 본다.
 
-## 가장 빠른 배포 (권장)
+## 가장 빠른 배포 (권장) — `redeploy-local.command`
+
+**⚠️ GitHub Actions 배포(`deploy.command`)는 EC2 보안그룹이 GitHub 러너 IP를 차단해
+`appleboy/ssh-action`에서 `dial tcp ***:22: i/o timeout`이 발생합니다. 사용자 Mac에서
+EC2로 직접 SSH 푸시하는 `redeploy-local.command`를 사용하세요. (필요시 보안그룹에 GitHub
+Actions IP 대역을 추가하면 Actions 배포도 가능하지만, 매주 IP가 바뀌므로 비추천)**
+
+Finder에서 `~/Downloads/upbit-news-alert/` 폴더 열고 **`redeploy-local.command`** 파일을 **더블클릭**하세요.
+
+- Terminal이 자동으로 열리고 EC2에 직접 SSH로 `.env` 업로드 → `git pull` → `docker build` → `docker compose up -d` 까지 수행합니다
+- `gh` 인증이나 GitHub 레포 생성 같은 단계가 필요 없습니다 (이미 푸시된 레포에서 clone)
+- 처음 실행 시 macOS가 "확인되지 않은 개발자" 경고를 띄우면: 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기" 클릭
+- 또는 마우스 우클릭(또는 Control+클릭) → "열기" 선택
+
+> `.github/workflows/deploy.yml`은 보안그룹 문제로 매 push마다 실패 알림이 옵니다.
+> 알림이 거슬리면 GitHub 레포 → Actions 탭 → "Deploy to AWS EC2" → ⋯ → Disable workflow 로 비활성화하세요.
+
+## 최초 배포 (이미 끝난 경우 무시) — `deploy.command`
 
 Finder에서 `~/Downloads/upbit-news-alert/` 폴더 열고 **`deploy.command`** 파일을 **더블클릭**하세요.
 

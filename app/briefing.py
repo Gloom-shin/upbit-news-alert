@@ -20,10 +20,12 @@ KST = timezone(timedelta(hours=9))
 
 
 def _fetch_movers(top_n: int = 10) -> tuple[list[dict], list[dict]]:
+    """업비트 전체 KRW 마켓 24시간 변화율 기준 상승률 TOP N / 하락률 TOP N."""
     markets = upbit.get_krw_markets()
     market_codes = [m["market"] for m in markets]
     name_map = {m["market"]: m.get("korean_name", m["market"]) for m in markets}
 
+    # ticker는 한 번에 100개씩 분할 호출
     rows: list[dict] = []
     for i in range(0, len(market_codes), 100):
         batch = market_codes[i:i + 100]
@@ -48,6 +50,7 @@ def _fetch_movers(top_n: int = 10) -> tuple[list[dict], list[dict]]:
 
 
 def _fetch_recent_alerts(hours: int = 24) -> list[dict]:
+    """최근 N시간 내 발송된 S/A급 알림 목록."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     try:
         with sqlite3.connect(str(config.DB_PATH)) as conn:
@@ -68,7 +71,8 @@ def _fetch_recent_alerts(hours: int = 24) -> list[dict]:
         return []
 
 
-def _fetch_uptrend_picks() -> list[dict]:
+def _fetch_uptrend_picks() -> list[str]:
+    """현재 2~3일 연속 상승 종목 (price_job과 동일 로직)."""
     try:
         return flt.find_uptrend_markets()
     except Exception as e:
@@ -76,7 +80,8 @@ def _fetch_uptrend_picks() -> list[dict]:
         return []
 
 
-def _ai_commentary(gainers: list[dict], losers: list[dict], picks: list[dict]) -> str:
+def _ai_commentary(gainers: list[dict], losers: list[dict], picks: list[str]) -> str:
+    """Claude이 오늘의 시장 분위기를 2~3문단으로 한국어로 짧게 코멘트."""
     try:
         from anthropic import Anthropic
     except ImportError:
@@ -114,8 +119,9 @@ def _ai_commentary(gainers: list[dict], losers: list[dict], picks: list[dict]) -
         return f"(AI 코멘트 생성 실패: {e})"
 
 
-def _format_html(gainers, losers, alerts, picks, commentary, now):
-    def row_to_li(r):
+def _format_html(gainers: list[dict], losers: list[dict], alerts: list[dict],
+                 picks: list[str], commentary: str, now: datetime) -> str:
+    def row_to_li(r: dict) -> str:
         pct = r["change_rate_24h"] * 100
         color = "#1a7f37" if pct >= 0 else "#cf222e"
         return (
@@ -126,7 +132,7 @@ def _format_html(gainers, losers, alerts, picks, commentary, now):
 
     gainers_html = "\n".join(row_to_li(r) for r in gainers) or "<li>—</li>"
     losers_html = "\n".join(row_to_li(r) for r in losers) or "<li>—</li>"
-    picks_html = ", ".join(f"<b>{escape(p['symbol'])}</b> ({p['run_days']}일)" for p in picks) if picks else "<i>해당 없음</i>"
+    picks_html = ", ".join(f"<b>{escape(p['symbol'])}</b> ({p['run_days']}일 연속)" for p in picks) if picks else "<i>해당 없음</i>"
 
     if alerts:
         alerts_html = "<ul>" + "".join(
@@ -140,28 +146,37 @@ def _format_html(gainers, losers, alerts, picks, commentary, now):
     commentary_html = "<br>".join(escape(line) for line in commentary.split("\n") if line.strip())
 
     return f"""<html><body style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#1f2328">
-<h2>📈 오늘의 업비트 브리핑</h2>
-<p style="color:#666">{now.strftime('%Y년 %m월 %d일')} · 한국시간 {now.strftime('%H:%M')}</p>
+<h2 style="margin:0 0 8px">📈 오늘의 업비트 브리핑</h2>
+<p style="color:#666;margin:0 0 20px">{now.strftime('%Y년 %m월 %d일 (%A)')} · 한국시간 {now.strftime('%H:%M')}</p>
+
 <div style="background:#f6f8fa;padding:16px;border-radius:8px;margin:16px 0">
-<h3>💬 AI 시장 코멘트</h3>
-<p style="line-height:1.6">{commentary_html}</p>
+<h3 style="margin:0 0 8px">💬 AI 시장 코멘트</h3>
+<p style="margin:0;line-height:1.6">{commentary_html}</p>
 </div>
-<h3>🎯 주목할 종목 (2~3일 연속 상승)</h3>
+
+<h3>🎯 주목할 종목 (2~3일 연속 상승 중)</h3>
 <p>{picks_html}</p>
+
 <h3>🚨 지난 24시간 S/A급 알림</h3>
 {alerts_html}
+
 <div style="display:flex;gap:24px;margin-top:24px">
 <div style="flex:1">
-<h3>🚀 상승률 TOP 10</h3>
-<ul style="list-style:none;padding:0;font-family:monospace;font-size:13px">{gainers_html}</ul>
+<h3 style="margin:0 0 8px">🚀 상승률 TOP 10</h3>
+<ul style="list-style:none;padding:0;margin:0;font-family:ui-monospace,monospace;font-size:13px">
+{gainers_html}
+</ul>
 </div>
 <div style="flex:1">
-<h3>📉 하락률 TOP 10</h3>
-<ul style="list-style:none;padding:0;font-family:monospace;font-size:13px">{losers_html}</ul>
+<h3 style="margin:0 0 8px">📉 하락률 TOP 10</h3>
+<ul style="list-style:none;padding:0;margin:0;font-family:ui-monospace,monospace;font-size:13px">
+{losers_html}
+</ul>
 </div>
 </div>
-<hr>
-<p style="color:#666;font-size:12px">— upbit-news-alert · 매일 아침 8시 KST</p>
+
+<hr style="border:none;border-top:1px solid #d0d7de;margin:24px 0">
+<p style="color:#666;font-size:12px;margin:0">— upbit-news-alert · 매일 아침 8시 KST 발송 · <a href="https://github.com/Gloom-shin/upbit-news-alert">repo</a></p>
 </body></html>"""
 
 
@@ -170,9 +185,11 @@ def run_briefing() -> bool:
     logger.info("[briefing] 시작 %s", now.isoformat())
 
     gainers, losers = _fetch_movers(top_n=10)
-    logger.info("[briefing] 상승 TOP1: %s, 하락 TOP1: %s",
+    logger.info("[briefing] 상승 TOP1: %s (%.2f%%), 하락 TOP1: %s (%.2f%%)",
                 gainers[0]["name"] if gainers else "-",
-                losers[0]["name"] if losers else "-")
+                (gainers[0]["change_rate_24h"] * 100) if gainers else 0,
+                losers[0]["name"] if losers else "-",
+                (losers[0]["change_rate_24h"] * 100) if losers else 0)
 
     alerts = _fetch_recent_alerts(hours=24)
     logger.info("[briefing] 최근 24h S/A 알림: %d건", len(alerts))
@@ -181,7 +198,7 @@ def run_briefing() -> bool:
     logger.info("[briefing] 2~3일 연속 상승 후보: %d종목", len(picks))
 
     commentary = _ai_commentary(gainers, losers, picks)
-    logger.info("[briefing] AI 코멘트 %d자", len(commentary))
+    logger.info("[briefing] AI 코멘트 %d자 생성", len(commentary))
 
     html_body = _format_html(gainers, losers, alerts, picks, commentary, now)
     subject = f"📈 오늘의 업비트 브리핑 — {now.strftime('%Y-%m-%d')}"
@@ -192,8 +209,12 @@ def run_briefing() -> bool:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s")
-    return 0 if run_briefing() else 1
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+    )
+    ok = run_briefing()
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

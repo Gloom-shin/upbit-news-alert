@@ -80,56 +80,90 @@ def fetch_all() -> list[NewsItem]:
 
 # ── 종목 매칭 ────────────────────────────────────────────────────────
 
-# 한글 코인 별칭 → 심볼 매핑 (우선 자주 거론되는 것만, 필요 시 확장)
-KOREAN_NAME_TO_SYMBOL = {
+# 모호하거나 생태계/일반어로 자주 쓰여 오탐을 일으키는 키워드는 단독 매칭 금지.
+# 예: "코스모스"는 SEI/NEAR/INJ 같은 Cosmos SDK 체인 뉴스에서 자주 등장 → ATOM 오탐
+# "스텔라"는 일반 명사로 게임/회사명에도 쓰임. "톤"도 메신저 텔레그램 외 잡소음 가능.
+_AMBIGUOUS_KOREAN_NAMES = {
+    "코스모스",   # Cosmos는 생태계 이름이기도 함 (ATOM ≠ Cosmos 생태계)
+    "톤",         # 짧음 + 일반어 (TON)
+    "스텔라",     # 일반 명사
+    "체인",       # 일반 명사
+    "샌드박스",   # 일반 명사 (SAND ≠ 게임 샌드박스)
+}
+
+# 사용자 정의 한글 별명 — 업비트 korean_name과 별개로 자주 쓰이는 별칭
+_EXTRA_KOREAN_ALIASES: dict[str, str] = {
     "비트코인": "BTC",
-    "이더리움": "ETH",
-    "리플": "XRP",
-    "도지": "DOGE",
     "도지코인": "DOGE",
-    "솔라나": "SOL",
-    "에이다": "ADA",
-    "카르다노": "ADA",
-    "트론": "TRX",
-    "폴카닷": "DOT",
-    "체인링크": "LINK",
+    "도지": "DOGE",
+    "리플": "XRP",
     "라이트코인": "LTC",
     "이더리움클래식": "ETC",
     "스텔라루멘": "XLM",
-    "스텔라": "XLM",
     "비트코인캐시": "BCH",
-    "이오스": "EOS",
-    "샌드박스": "SAND",
-    "디센트럴랜드": "MANA",
     "유니스왑": "UNI",
-    "앱토스": "APT",
-    "아발란체": "AVAX",
-    "코스모스": "ATOM",
-    "수이": "SUI",
-    "톤코인": "TON",
-    "톤": "TON",
+    "이오스": "EOS",
     "시바이누": "SHIB",
-    "페페": "PEPE",
-    "위믹스": "WEMIX",
-    "클레이": "KLAY",
+    "톤코인": "TON",
     "클레이튼": "KLAY",
-    "체인": "XCHAIN",
 }
 
 
+def _build_name_to_symbol_map(candidate_symbols: set[str]) -> dict[str, str]:
+    """업비트 KRW 마켓 리스트에서 한글/영문 이름 → 심볼 동적 매핑 빌드.
+    candidate_symbols(현재 상승 후보)에 속한 것만 포함."""
+    name_map: dict[str, str] = {}
+
+    # 1) Upbit가 제공하는 공식 korean_name / english_name
+    try:
+        from . import upbit  # 순환 임포트 회피 위해 함수 내부 임포트
+        for m in upbit.get_krw_markets():
+            symbol = m["market"].split("-", 1)[1]
+            if symbol not in candidate_symbols:
+                continue
+            korean = (m.get("korean_name") or "").strip()
+            english = (m.get("english_name") or "").strip()
+            if korean and korean not in _AMBIGUOUS_KOREAN_NAMES and len(korean) >= 2:
+                name_map[korean] = symbol
+            if english and len(english) >= 3:
+                # 영어 이름은 그대로 (대소문자 무시 매칭은 검출 함수에서)
+                name_map[english.upper()] = symbol
+    except Exception as e:
+        logger.warning("[news] 동적 이름 매핑 빌드 실패: %s", e)
+
+    # 2) 추가 별칭 (업비트 표준명에 없는 흔한 호칭)
+    for name, sym in _EXTRA_KOREAN_ALIASES.items():
+        if sym in candidate_symbols and name not in _AMBIGUOUS_KOREAN_NAMES:
+            name_map[name] = sym
+    return name_map
+
+
 def detect_symbols(text: str, candidate_symbols: set[str]) -> set[str]:
-    """텍스트에서 후보 종목 심볼 또는 한글 별칭이 언급되었는지 검출.
-    반환: 매칭된 심볼 집합."""
+    """텍스트에서 후보 종목 심볼/한글 정식명/영문명/별칭이 언급되었는지 검출.
+    반환: 매칭된 심볼 집합. 오탐 방지를 위해 단어 경계와 모호어 필터 적용."""
     matched: set[str] = set()
     upper = text.upper()
-    # 1) 영문 심볼 직접 매칭 — 단어 경계 사용
+
+    # 1) 영문 심볼 직접 매칭 — 단어 경계 사용 (대소문자 무시)
     for sym in candidate_symbols:
         if re.search(rf"(?<![A-Z0-9]){re.escape(sym)}(?![A-Z0-9])", upper):
             matched.add(sym)
-    # 2) 한글 별칭 매칭
-    for korean, sym in KOREAN_NAME_TO_SYMBOL.items():
-        if sym in candidate_symbols and korean in text:
-            matched.add(sym)
+
+    # 2) 한글/영문 이름 매칭 — 업비트 마켓 메타에서 동적으로 빌드
+    name_map = _build_name_to_symbol_map(candidate_symbols)
+    for name, sym in name_map.items():
+        if name in _AMBIGUOUS_KOREAN_NAMES:
+            continue
+        # 한글은 그대로 부분 매칭, 영문은 단어 경계 매칭
+        if re.match(r"^[A-Z0-9 ]+$", name):
+            # 영문 이름
+            if re.search(rf"(?<![A-Z0-9]){re.escape(name)}(?![A-Z0-9])", upper):
+                matched.add(sym)
+        else:
+            # 한글/혼합 이름 — 부분 매칭이지만 길이 2 이상이라 노이즈 적음
+            if name in text:
+                matched.add(sym)
+
     return matched
 
 

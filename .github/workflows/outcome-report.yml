@@ -1,19 +1,24 @@
-name: Daily Briefing
+name: Weekly Outcome Report
 
 on:
   schedule:
-    - cron: '0 23 * * *'   # UTC 23:00 = KST 08:00 다음날 아침
+    - cron: '0 14 * * SUN'   # UTC 14:00 SUN = KST 일요일 23:00
   workflow_dispatch:
+    inputs:
+      days_window:
+        description: '집계 일수 (기본 7)'
+        required: false
+        default: '7'
 
 permissions:
   contents: read
 
 concurrency:
-  group: briefing
+  group: outcome-report
   cancel-in-progress: false
 
 jobs:
-  briefing:
+  report:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
@@ -38,16 +43,18 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
 
-      - name: Restore SQLite state from monitor cache
+      - name: Restore SQLite state
         uses: actions/cache/restore@v4
         with:
           path: data/alerts.db
-          key: alerts-db-briefing-${{ github.run_id }}
+          key: alerts-db-report-${{ github.run_id }}
           restore-keys: |
             alerts-db-
 
       - name: Ensure data dir
         run: mkdir -p data
 
-      - name: Run briefing
-        run: python -m app.briefing
+      - name: Run outcome report
+        env:
+          DAYS_WINDOW: ${{ github.event.inputs.days_window || '7' }}
+        run: python -m app.outcome_report
