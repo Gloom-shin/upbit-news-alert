@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         log.info("DRY_RUN — missing env keys: %s", missing or "(none)")
         try:
             from . import (  # noqa: F401  (import 가능성만 검증)
-                classifier, db, filter, jobs, news, notifier, tracker, upbit,
+                classifier, filter, news, notifier, tracker, upbit,
             )
         except Exception as e:
             log.error("DRY_RUN — import 실패: %s", e)
