@@ -24,22 +24,4 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Send test email
         run: |
-          python - <<'PY'
-          from app.notifier import send_email
-          subject = "[upbit-alert] 파이프라인 테스트 - Gmail SMTP 정상"
-          body = """안녕하세요!
-
-  upbit-news-alert 서비스의 알림 파이프라인 테스트 이메일입니다.
-
-  - Gmail SMTP 인증 OK
-  - GitHub Actions 러너에서 Gmail로 발송 가능
-  - 본인 메일주소로 정상 수신
-
-  이제 진짜 S/A급 호재가 매칭되면 같은 채널로 알림이 도착합니다.
-
-  - upbit-news-alert via GitHub Actions
-  """
-          ok = send_email(subject, body)
-          import sys
-          sys.exit(0 if ok else 1)
-          PY
+          python -c "from app.notifier import send_email; import sys; sys.exit(0 if send_email('[upbit-alert] 파이프라인 테스트', '안녕하세요!\n\nupbit-news-alert 알림 파이프라인이 정상 작동합니다.\n\n- Gmail SMTP OK\n- GitHub Actions 러너에서 발송 가능\n- 본인 주소로 정상 수신\n\n실제 S/A급 호재 감지되면 동일 채널로 알림이 도착합니다.\n\n- upbit-news-alert via GitHub Actions') else 1)"
