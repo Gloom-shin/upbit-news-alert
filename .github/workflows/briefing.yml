@@ -1,0 +1,53 @@
+name: Daily Briefing
+
+on:
+  schedule:
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: briefing
+  cancel-in-progress: false
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_MODEL: claude-haiku-4-5-20251001
+      GMAIL_USER: ${{ secrets.GMAIL_USER }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: '587'
+      MIN_CONSECUTIVE_UP_DAYS: '2'
+      MAX_CONSECUTIVE_UP_DAYS: '3'
+      DRY_RUN: 'false'
+      LOG_LEVEL: INFO
+      TZ: Asia/Seoul
+      DB_PATH: data/alerts.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Restore SQLite state from monitor cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/alerts.db
+          key: alerts-db-briefing-${{ github.run_id }}
+          restore-keys: |
+            alerts-db-
+
+      - name: Ensure data dir
+        run: mkdir -p data
+
+      - name: Run briefing
+        run: python -m app.briefing
