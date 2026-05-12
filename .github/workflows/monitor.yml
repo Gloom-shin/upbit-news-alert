@@ -2,7 +2,7 @@ name: Monitor Upbit
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '3-59/10 * * * *'   # 매시 3,13,23,33,43,53분 — 10분 주기 + cron 부하 정점(매시 0분) 회피
   workflow_dispatch:
 
 permissions:

@@ -2,7 +2,8 @@ name: Daily Briefing
 
 on:
   schedule:
-    - cron: '0 23 * * *'   # UTC 23:00 = KST 08:00 다음날 아침
+    - cron: '52 22 * * *'   # UTC 22:52 = KST 07:52 — 매시 0분 부하 회피
+    - cron: '52 11 * * *'   # UTC 11:52 = KST 20:52 — 저녁 시장 마감 시점 한 번 더
   workflow_dispatch:
 
 permissions:

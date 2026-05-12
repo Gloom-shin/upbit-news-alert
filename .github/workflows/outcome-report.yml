@@ -2,7 +2,7 @@ name: Weekly Outcome Report
 
 on:
   schedule:
-    - cron: '0 14 * * SUN'   # UTC 14:00 SUN = KST 일요일 23:00
+    - cron: '52 13 * * SUN'   # UTC 13:52 SUN = KST 일요일 22:52 — 매시 0분 부하 회피
   workflow_dispatch:
     inputs:
       days_window:
