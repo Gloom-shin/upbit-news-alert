@@ -1,4 +1,4 @@
-"""Gmail SMTP 알림 — market-briefing/email_sender.py 패턴 차용.
+"""Gmail SMTP 알림 — HTML 알림 카드 + 일반 텍스트 fallback.
 
 App Password로 smtp.gmail.com:587 STARTTLS 인증.
 """
@@ -6,12 +6,32 @@ from __future__ import annotations
 
 import logging
 import smtplib
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 
 from . import config
 
 logger = logging.getLogger(__name__)
+KST = timezone(timedelta(hours=9))
+
+
+# ── 한글 이름 매핑 캐시 (업비트 마켓 메타에서 조회) ────────────────
+_korean_name_cache: dict[str, str] = {}
+
+
+def _get_korean_name(market: str) -> str:
+    """KRW-BTC → '비트코인'. 못 찾으면 빈 문자열."""
+    global _korean_name_cache
+    if not _korean_name_cache:
+        try:
+            from . import upbit
+            for m in upbit.get_krw_markets():
+                _korean_name_cache[m["market"]] = m.get("korean_name", "")
+        except Exception as e:
+            logger.warning("[notifier] 마켓 이름 조회 실패: %s", e)
+    return _korean_name_cache.get(market, "")
 
 
 def send_email(subject: str, body: str, *, html: bool = False) -> bool:
@@ -41,6 +61,15 @@ def send_email(subject: str, body: str, *, html: bool = False) -> bool:
         return False
 
 
+# 등급별 색상 / 이모지 / 라벨
+_GRADE_THEME = {
+    "S": {"color": "#cf222e", "bg": "#ffe5e5", "emoji": "🔥", "label": "S급 호재"},
+    "A": {"color": "#d29922", "bg": "#fff8e1", "emoji": "⚡", "label": "A급 호재"},
+    "B": {"color": "#0969da", "bg": "#e3f0ff", "emoji": "💧", "label": "B급 호재"},
+    "C": {"color": "#6e7781", "bg": "#f0f0f0", "emoji": "—",  "label": "참고"},
+}
+
+
 def format_alert(
     *,
     grade: str,
@@ -52,8 +81,111 @@ def format_alert(
     source: str,
     detected_price: float | None,
     avg_days_for_grade: float | None,
+    run_days: int | None = None,
+    reason: str | None = None,
+) -> tuple[str, str, bool]:
+    """이메일 제목 / HTML 본문 / html=True flag 반환. (subject, body, is_html)
+
+    호환을 위해 send_email은 알아서 html 플래그 처리.
+    호출자는 그냥 `subject, body, is_html = format_alert(...); send_email(subject, body, html=is_html)`.
+    """
+    theme = _GRADE_THEME.get(grade, _GRADE_THEME["B"])
+    korean = _get_korean_name(market)
+    now_kst = datetime.now(KST)
+
+    # 제목: 가독성 위해 이모지 + 종목 한글 이름 포함
+    name_str = f"{korean}({symbol})" if korean else symbol
+    subject = f"{theme['emoji']} [{grade}급] {name_str} · {headline[:40]}"
+
+    # 가격/통계 라인
+    price_str = f"{detected_price:,.0f}원" if detected_price else "—"
+    avg_str = (
+        f"{avg_days_for_grade:.1f}일"
+        if isinstance(avg_days_for_grade, (int, float)) and avg_days_for_grade
+        else "데이터 부족"
+    )
+    run_str = f"{run_days}일 연속 상승 중" if run_days else "—"
+
+    # 외부 링크
+    upbit_url = f"https://upbit.com/exchange?code=CRIX.UPBIT.{market}"
+    cryptoquant_url = f"https://cryptoquant.com/asset/{symbol.lower()}/summary"
+
+    # HTML 본문
+    body = f"""<html><body style="margin:0;padding:0;background:#f6f8fa;font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;color:#1f2328">
+<div style="max-width:560px;margin:0 auto;padding:24px 16px">
+
+  <!-- 등급 배지 -->
+  <div style="background:{theme['bg']};border-left:6px solid {theme['color']};border-radius:8px;padding:18px 20px;margin-bottom:18px">
+    <div style="font-size:12px;font-weight:700;color:{theme['color']};letter-spacing:1px">{escape(theme['label'])}</div>
+    <div style="font-size:24px;font-weight:800;color:#1f2328;margin-top:4px">
+      {escape(korean) if korean else escape(symbol)}
+      <span style="font-size:14px;color:#888;font-weight:500">{escape(symbol)}</span>
+    </div>
+  </div>
+
+  <!-- 헤드라인 -->
+  <h2 style="margin:0 0 8px;font-size:18px;line-height:1.5">{escape(headline)}</h2>
+  <p style="margin:0 0 16px;color:#666;font-size:13px">
+    출처 <b>{escape(source)}</b> · {now_kst.strftime('%Y-%m-%d %H:%M KST')}
+  </p>
+
+  <!-- 호재 요약 박스 -->
+  <div style="background:#f6f8fa;border-radius:6px;padding:14px 16px;margin-bottom:16px;font-size:14px;line-height:1.6">
+    {escape(summary[:500])}
+  </div>
+
+  <!-- 핵심 정보 테이블 -->
+  <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:18px">
+    <tr>
+      <td style="padding:8px 0;color:#666;width:140px">💰 감지 시점 가격</td>
+      <td style="padding:8px 0;font-weight:600">{price_str}</td>
+    </tr>
+    <tr>
+      <td style="padding:8px 0;color:#666">📈 상승 지속</td>
+      <td style="padding:8px 0;font-weight:600">{run_str}</td>
+    </tr>
+    <tr>
+      <td style="padding:8px 0;color:#666">📊 이 등급 과거 평균 보유일</td>
+      <td style="padding:8px 0;font-weight:600">{avg_str}</td>
+    </tr>
+    {f'<tr><td style="padding:8px 0;color:#666">🤖 분류 사유</td><td style="padding:8px 0">{escape(reason or "")}</td></tr>' if reason else ''}
+  </table>
+
+  <!-- 빠른 액션 버튼 -->
+  <div style="margin-bottom:18px">
+    <a href="{escape(upbit_url)}" style="display:inline-block;background:{theme['color']};color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px;margin-right:6px">
+      업비트에서 보기 ↗
+    </a>
+    <a href="{escape(url)}" style="display:inline-block;background:#fff;color:#0969da;border:1px solid #d0d7de;padding:9px 16px;border-radius:6px;text-decoration:none;font-weight:600;font-size:13px">
+      원문 기사 ↗
+    </a>
+  </div>
+
+  <hr style="border:none;border-top:1px solid #d0d7de;margin:24px 0">
+  <p style="color:#888;font-size:11px;margin:0;line-height:1.6">
+    이 알림은 자동 시스템이 호재 등급을 판단해 발송했어요. 투자 결정은 본인 판단으로.<br>
+    upbit-news-alert · <a href="https://github.com/Gloom-shin/upbit-news-alert" style="color:#0969da">repo</a>
+  </p>
+
+</div>
+</body></html>"""
+
+    return subject, body, True
+
+
+def format_alert_plain(
+    *,
+    grade: str,
+    symbol: str,
+    market: str,
+    headline: str,
+    summary: str,
+    url: str,
+    source: str,
+    detected_price: float | None,
+    avg_days_for_grade: float | None,
 ) -> tuple[str, str]:
-    """이메일 제목/본문 생성. (subject, body) 반환."""
+    """레거시 호환용 — 일반 텍스트 본문 (subject, body)."""
     subject = f"[upbit-알림][{grade}급] {symbol} - {headline[:50]}"
     price_line = f"{detected_price:,.0f} KRW" if detected_price else "—"
     avg_line = (

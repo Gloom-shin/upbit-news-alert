@@ -93,7 +93,7 @@ def news_job() -> None:
                 cand["market"], symbol, cls.grade, item.title[:60],
             )
             if cls.is_alert_worthy:
-                subject, body = format_alert(
+                subject, body, is_html = format_alert(
                     grade=cls.grade,
                     symbol=symbol,
                     market=cand["market"],
@@ -103,8 +103,10 @@ def news_job() -> None:
                     source=item.source,
                     detected_price=cand["last_close"],
                     avg_days_for_grade=grade_avg_days.get(cls.grade),
+                    run_days=cand.get("run_days"),
+                    reason=cls.reason,
                 )
-                if send_email(subject, body):
+                if send_email(subject, body, html=is_html):
                     db.mark_notified(event_id)
                     db.open_price_tracking(
                         news_event_id=event_id,
