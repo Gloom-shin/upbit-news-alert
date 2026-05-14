@@ -302,10 +302,21 @@ def _evaluate_one(tracking_row, current_price: float | None) -> None:
 # ── 단발 실행 헬퍼 (CLI --once) ─────────────────────────────────────
 
 
+def briefing_job() -> None:
+    """피크 30분 전 시점에 발송되는 코인 브리핑."""
+    logger.info("[briefing_job] 시작")
+    try:
+        from . import briefing
+        briefing.run_briefing()
+    except Exception as e:
+        logger.warning("[briefing_job] 실패: %s", e)
+
+
 def run_once(name: str) -> None:
     {
         "price": price_job,
         "news": news_job,
         "track": track_job,
         "drain": drain_queue_job,
+        "briefing": briefing_job,
     }[name]()

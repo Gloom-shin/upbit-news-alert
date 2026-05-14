@@ -1,9 +1,13 @@
-"""매일 아침 8 AM KST에 발송되는 코인 브리핑.
+"""4개 거래량 피크 시간대 30분 전에 발송되는 코인 브리핑.
+
+발송 시각 (KST): 08:30 / 15:30 / 22:00 / 01:30 (config.DRAIN_TIMES 공유)
 
 - 업비트 KRW 마켓 24시간 변화율 상위/하위 10
 - Claude이 작성하는 시장 한줄평
 - 최근 24시간 S/A급 알림 요약
 - 2~3일 연속 상승 후보 종목
+- 4개 지역 피크 시간대 표 (NOW/NEXT 강조)
+- 슬롯별 라벨 (🌅 아침 / 🌆 오후 / 🌃 야간 / 🌙 심야)
 """
 from __future__ import annotations
 
@@ -17,6 +21,30 @@ from . import config, filter as flt, notifier, upbit
 
 logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
+
+
+# 슬롯별 표시 정보 — 현재 시각으로 분기. (hour, slot_id, emoji, title, desc)
+_BRIEFING_SLOTS: list[tuple[int, str, str, str, str]] = [
+    (8,  "morning",   "🌅", "아침 브리핑",  "국내 피크(09:00) 30분 전"),
+    (15, "afternoon", "🌆", "오후 브리핑",  "유럽/아시아 피크(16:00) 30분 전"),
+    (22, "evening",   "🌃", "야간 브리핑",  "미국 피크(22:30) 30분 전"),
+    (1,  "night",     "🌙", "심야 브리핑",  "심야 휩쏘(02:00) 30분 전"),
+]
+
+
+def _current_slot(now_kst: datetime) -> tuple[str, str, str, str]:
+    """현재 시각에 가장 가까운(이미 지난) 슬롯 라벨. (slot_id, emoji, title, desc)"""
+    cur_min = now_kst.hour * 60 + now_kst.minute
+    # 각 슬롯은 hour:30에 시작. 가장 최근에 트리거됐을 슬롯을 찾는다.
+    best: tuple[int, tuple[str, str, str, str]] | None = None
+    for h, sid, emoji, title, desc in _BRIEFING_SLOTS:
+        slot_min = h * 60 + 30 if h != 22 else h * 60  # 22:00 미국, 나머지는 :30
+        # 슬롯이 cur_min보다 이전이면서 가장 가까운 것
+        diff = (cur_min - slot_min) % (24 * 60)
+        if best is None or diff < best[0]:
+            best = (diff, (sid, emoji, title, desc))
+    assert best is not None
+    return best[1]
 
 
 def _fetch_movers(top_n: int = 10) -> tuple[list[dict], list[dict]]:
@@ -120,7 +148,8 @@ def _ai_commentary(gainers: list[dict], losers: list[dict], picks: list[str]) ->
 
 
 def _format_html(gainers: list[dict], losers: list[dict], alerts: list[dict],
-                 picks: list[dict], commentary: str, now: datetime) -> str:
+                 picks: list[dict], commentary: str, now: datetime,
+                 slot: tuple[str, str, str, str]) -> str:
     """Mobile-first, 카드형 레이아웃. Gmail/iOS Mail/Android Gmail에서 잘 보임."""
 
     def mover_row(r: dict, color: str) -> str:
@@ -186,10 +215,13 @@ def _format_html(gainers: list[dict], losers: list[dict], alerts: list[dict],
 
   <!-- 헤더 -->
   <div style="margin-bottom:20px">
-    <div style="font-size:12px;color:#666;letter-spacing:1px;font-weight:600">📈 DAILY BRIEFING</div>
-    <h1 style="margin:4px 0 6px;font-size:24px">오늘의 업비트 브리핑</h1>
+    <div style="font-size:12px;color:#666;letter-spacing:1px;font-weight:600">{slot[1]} PEAK PREVIEW · {slot[3]}</div>
+    <h1 style="margin:4px 0 6px;font-size:24px">{slot[1]} {slot[2]}</h1>
     <p style="margin:0;color:#666;font-size:13px">{now.strftime('%Y년 %-m월 %-d일 (%A)')} · 한국시간 {now.strftime('%H:%M')}</p>
   </div>
+
+  <!-- 거래량 피크 시간대 -->
+  {notifier.render_peak_times_block(now)}
 
   <!-- 시장 분위기 카드 -->
   <div style="background:#fff;border:1px solid #e7e9eb;border-radius:10px;padding:16px 20px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
@@ -236,7 +268,7 @@ def _format_html(gainers: list[dict], losers: list[dict], alerts: list[dict],
 
   <hr style="border:none;border-top:1px solid #d0d7de;margin:24px 0">
   <p style="color:#888;font-size:11px;margin:0;line-height:1.6">
-    — upbit-news-alert · 매일 아침 8시 KST 발송 · <a href="https://github.com/Gloom-shin/upbit-news-alert" style="color:#0969da">repo</a>
+    — upbit-news-alert · 4개 피크 30분 전(08:30 / 15:30 / 22:00 / 01:30 KST) 발송 · <a href="https://github.com/Gloom-shin/upbit-news-alert" style="color:#0969da">repo</a>
   </p>
 
 </div>
@@ -245,7 +277,8 @@ def _format_html(gainers: list[dict], losers: list[dict], alerts: list[dict],
 
 def run_briefing() -> bool:
     now = datetime.now(KST)
-    logger.info("[briefing] 시작 %s", now.isoformat())
+    slot = _current_slot(now)  # (slot_id, emoji, title, desc)
+    logger.info("[briefing] 시작 slot=%s %s", slot[0], now.isoformat())
 
     gainers, losers = _fetch_movers(top_n=10)
     logger.info("[briefing] 상승 TOP1: %s (%.2f%%), 하락 TOP1: %s (%.2f%%)",
@@ -263,8 +296,8 @@ def run_briefing() -> bool:
     commentary = _ai_commentary(gainers, losers, picks)
     logger.info("[briefing] AI 코멘트 %d자 생성", len(commentary))
 
-    html_body = _format_html(gainers, losers, alerts, picks, commentary, now)
-    subject = f"📈 오늘의 업비트 브리핑 — {now.strftime('%Y-%m-%d')}"
+    html_body = _format_html(gainers, losers, alerts, picks, commentary, now, slot)
+    subject = f"{slot[1]} {slot[2]} — {now.strftime('%Y-%m-%d %H:%M KST')} ({slot[3]})"
 
     ok = notifier.send_email(subject, html_body, html=True)
     logger.info("[briefing] 이메일 발송 %s", "성공" if ok else "실패")

@@ -107,6 +107,72 @@ def _current_peak_label(now_kst: datetime) -> str | None:
     return None
 
 
+def render_peak_times_block(now_kst: datetime) -> str:
+    """4개 지역 피크 시간대 + 현재/다음 피크 강조 HTML 블록.
+
+    format_alert와 briefing 양쪽에서 재사용. 외부 의존성은 datetime 하나뿐.
+    """
+    cur_peak = _current_peak_label(now_kst)
+    next_min, next_label, next_time, _ = _next_peak_info(now_kst)
+
+    if cur_peak:
+        peak_status_html = (
+            f"<b style='color:#cf222e'>지금 {escape(cur_peak)} 피크 진행 중</b> · "
+            f"다음 피크 {escape(next_label)} {escape(next_time)} KST "
+            f"({next_min}분 후)"
+        )
+    else:
+        if next_min <= 30:
+            tone = "color:#cf222e;font-weight:700"
+            label_prefix = "곧 피크 진입"
+        elif next_min <= 90:
+            tone = "color:#d29922;font-weight:600"
+            label_prefix = "다음 피크"
+        else:
+            tone = "color:#666"
+            label_prefix = "다음 피크"
+        peak_status_html = (
+            f"<span style='{tone}'>{label_prefix}: "
+            f"{escape(next_label)} {escape(next_time)} KST · "
+            f"{next_min}분 후</span>"
+        )
+
+    peaks_rows = ""
+    for sh, sm, eh, em, label, icon, desc in _PEAKS_KST:
+        end_disp = f"{eh:02d}:{em:02d}" if eh < 24 else f"익일 {eh-24:02d}:{em:02d}"
+        is_current = (label == cur_peak)
+        is_next = (label == next_label) and not is_current
+        if is_current:
+            row_style = "background:#ffe5e5"
+            badge = " <span style='font-size:10px;color:#cf222e;font-weight:700'>● NOW</span>"
+        elif is_next:
+            row_style = "background:#fff8e1"
+            badge = " <span style='font-size:10px;color:#d29922;font-weight:700'>▶ NEXT</span>"
+        else:
+            row_style = ""
+            badge = ""
+        peaks_rows += (
+            f"<tr style='{row_style}'>"
+            f"<td style='padding:6px 8px;white-space:nowrap'>{icon} <b>{escape(label)}</b>{badge}</td>"
+            f"<td style='padding:6px 8px;white-space:nowrap;color:#444'>{sh:02d}:{sm:02d}–{end_disp}</td>"
+            f"<td style='padding:6px 8px;color:#666;font-size:11px'>{escape(desc)}</td>"
+            f"</tr>"
+        )
+
+    return f"""
+  <div style="background:#fafbfc;border:1px solid #d0d7de;border-radius:6px;padding:12px 14px;margin-bottom:18px">
+    <div style="font-size:11px;font-weight:700;color:#57606a;letter-spacing:1px;margin-bottom:8px">
+      ⏰ 거래량 피크 시간대 (KST)
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      {peaks_rows}
+    </table>
+    <div style="margin-top:10px;padding-top:8px;border-top:1px dashed #d0d7de;font-size:12px">
+      {peak_status_html}
+    </div>
+  </div>"""
+
+
 def format_alert(
     *,
     grade: str,
@@ -147,53 +213,8 @@ def format_alert(
     upbit_url = f"https://upbit.com/exchange?code=CRIX.UPBIT.{market}"
     cryptoquant_url = f"https://cryptoquant.com/asset/{symbol.lower()}/summary"
 
-    # 거래량 피크 시간대 블록 — 다음 피크 강조
-    cur_peak = _current_peak_label(now_kst)
-    next_min, next_label, next_time, next_desc = _next_peak_info(now_kst)
-    if cur_peak:
-        peak_status_html = (
-            f"<b style='color:#cf222e'>지금 {escape(cur_peak)} 피크 진행 중</b> · "
-            f"다음 피크 {escape(next_label)} {escape(next_time)} KST "
-            f"({next_min}분 후)"
-        )
-    else:
-        if next_min <= 30:
-            tone = "color:#cf222e;font-weight:700"
-            label_prefix = "곧 피크 진입"
-        elif next_min <= 90:
-            tone = "color:#d29922;font-weight:600"
-            label_prefix = "다음 피크"
-        else:
-            tone = "color:#666"
-            label_prefix = "다음 피크"
-        peak_status_html = (
-            f"<span style='{tone}'>{label_prefix}: "
-            f"{escape(next_label)} {escape(next_time)} KST · "
-            f"{next_min}분 후</span>"
-        )
-
-    peaks_rows = ""
-    for sh, sm, eh, em, label, icon, desc in _PEAKS_KST:
-        # 표시용 종료 시각: 24시간 넘어가면 익일로 표기
-        end_disp = f"{eh:02d}:{em:02d}" if eh < 24 else f"익일 {eh-24:02d}:{em:02d}"
-        is_current = (label == cur_peak)
-        is_next = (label == next_label) and not is_current
-        if is_current:
-            row_style = "background:#ffe5e5"
-            badge = " <span style='font-size:10px;color:#cf222e;font-weight:700'>● NOW</span>"
-        elif is_next:
-            row_style = "background:#fff8e1"
-            badge = " <span style='font-size:10px;color:#d29922;font-weight:700'>▶ NEXT</span>"
-        else:
-            row_style = ""
-            badge = ""
-        peaks_rows += (
-            f"<tr style='{row_style}'>"
-            f"<td style='padding:6px 8px;white-space:nowrap'>{icon} <b>{escape(label)}</b>{badge}</td>"
-            f"<td style='padding:6px 8px;white-space:nowrap;color:#444'>{sh:02d}:{sm:02d}–{end_disp}</td>"
-            f"<td style='padding:6px 8px;color:#666;font-size:11px'>{escape(desc)}</td>"
-            f"</tr>"
-        )
+    # 거래량 피크 시간대 블록 (briefing과 공통)
+    peak_block_html = render_peak_times_block(now_kst)
 
     # HTML 본문
     body = f"""<html><body style="margin:0;padding:0;background:#f6f8fa;font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;color:#1f2328">
@@ -237,19 +258,9 @@ def format_alert(
   </table>
 
   <!-- 거래량 피크 시간대 -->
-  <div style="background:#fafbfc;border:1px solid #d0d7de;border-radius:6px;padding:12px 14px;margin-bottom:18px">
-    <div style="font-size:11px;font-weight:700;color:#57606a;letter-spacing:1px;margin-bottom:8px">
-      ⏰ 거래량 피크 시간대 (KST)
-    </div>
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      {peaks_rows}
-    </table>
-    <div style="margin-top:10px;padding-top:8px;border-top:1px dashed #d0d7de;font-size:12px">
-      {peak_status_html}
-    </div>
-    <div style="margin-top:6px;font-size:11px;color:#888;line-height:1.5">
-      이 알림은 피크 30분 전 윈도우에 발송됐어요. 피크 진입 전 검토하시고 진입 여부 판단하세요.
-    </div>
+  {peak_block_html}
+  <div style="margin:-12px 0 18px;font-size:11px;color:#888;line-height:1.5;padding:0 14px">
+    이 알림은 피크 30분 전 윈도우에 발송됐어요. 피크 진입 전 검토하시고 진입 여부 판단하세요.
   </div>
 
   <!-- 빠른 액션 버튼 -->
