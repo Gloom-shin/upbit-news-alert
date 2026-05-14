@@ -43,7 +43,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="upbit-news-alert")
     p.add_argument("--dry-run", action="store_true",
                    help="환경 검증 + 모듈 import만 확인하고 종료")
-    p.add_argument("--once", choices=["price", "news", "track"],
+    p.add_argument("--once", choices=["price", "news", "track", "drain"],
                    help="해당 잡을 1회만 실행하고 종료")
     return p.parse_args(argv)
 
@@ -71,11 +71,20 @@ def run_scheduler() -> None:
         CronTrigger(hour=config.TRACK_HOUR_KST, minute=config.TRACK_MINUTE_KST),
         id="daily_track",
     )
+    # 윈도우 시작 시각마다 pending 큐 드레인
+    for i, (h, m) in enumerate(config.DRAIN_TIMES):
+        sched.add_job(
+            jobs.drain_queue_job,
+            CronTrigger(hour=h, minute=m),
+            id=f"drain_queue_{h:02d}{m:02d}",
+        )
     log.info("scheduler started — TZ=%s", config.TZ)
     log.info("registered jobs: %s", [j.id for j in sched.get_jobs()])
     log.info("intervals: price=%dm news=%dm track=%02d:%02d KST",
              config.PRICE_INTERVAL_MIN, config.NEWS_INTERVAL_MIN,
              config.TRACK_HOUR_KST, config.TRACK_MINUTE_KST)
+    log.info("drain times (KST): %s",
+             ", ".join(f"{h:02d}:{m:02d}" for h, m in config.DRAIN_TIMES))
 
     # 부팅 직후 가격 모니터링 1회 실행 (콜드 스타트 방지)
     sched.add_job(jobs.price_job, id="boot_price", next_run_time=_now_plus(2))

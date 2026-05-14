@@ -38,6 +38,27 @@ NEWS_HTTP_TIMEOUT = int(os.getenv("NEWS_HTTP_TIMEOUT", "10"))
 TRAILING_DROP_THRESHOLD = float(os.getenv("TRAILING_DROP_THRESHOLD", "0.07"))  # -7%
 CONSECUTIVE_RED_DAYS = int(os.getenv("CONSECUTIVE_RED_DAYS", "2"))             # 연속 음봉 N일
 
+# 알림 윈도우 (피크 30분 전 ~ 피크 종료, KST). (start_hour, start_min, end_hour, end_min)
+# 22:00-01:00 미국 윈도우는 자정을 넘기므로 두 조각(22:00-24:00, 00:00-01:00)으로 표현
+ALERT_WINDOWS: list[tuple[int, int, int, int]] = [
+    (8, 30, 10, 0),    # 국내 피크 (09:00-10:00) 30분 전
+    (15, 30, 18, 0),   # 유럽/아시아 (16:00-18:00) 30분 전
+    (22, 0, 24, 0),    # 미국 피크 (22:30-01:00) 30분 전 — 자정까지
+    (0, 0, 1, 0),      # 미국 피크 자정 이후 잔여
+    (1, 30, 4, 0),     # 심야 휩쏘 (02:00-04:00) 30분 전
+]
+
+# drain_queue_job 트리거 시각 (각 윈도우 시작 시점)
+DRAIN_TIMES: list[tuple[int, int]] = [
+    (8, 30),
+    (15, 30),
+    (22, 0),
+    (1, 30),
+]
+
+# pending 큐 TTL — 이보다 오래된 미발송 S/A는 폐기
+PENDING_TTL_HOURS = int(os.getenv("PENDING_TTL_HOURS", "24"))
+
 # Misc
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() in ("1", "true", "yes")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

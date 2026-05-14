@@ -120,6 +120,26 @@ def mark_notified(news_event_id: int) -> None:
         c.execute("UPDATE news_events SET notified=1 WHERE id=?", (news_event_id,))
 
 
+def get_pending_alerts(within_hours: int) -> list[sqlite3.Row]:
+    """알림 미발송(notified=0) S/A 등급 뉴스 중 within_hours 시간 이내에 생성된 것.
+
+    drain_queue_job이 윈도우 시작 시각에 호출.
+    """
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(hours=within_hours)).isoformat(timespec="seconds")
+    with conn() as c:
+        return list(c.execute(
+            """
+            SELECT * FROM news_events
+            WHERE notified = 0
+              AND grade IN ('S', 'A')
+              AND created_at >= ?
+            ORDER BY created_at ASC
+            """,
+            (cutoff,),
+        ))
+
+
 def open_price_tracking(*, news_event_id: int, symbol: str, market: str, entry_price: float) -> int:
     with conn() as c:
         cur = c.execute(

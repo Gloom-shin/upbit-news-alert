@@ -91,6 +91,7 @@ PYTHONPATH=. pytest tests/ -v
 | `python -m app.main --once price` | 가격 모니터링 1사이클 |
 | `python -m app.main --once news` | 뉴스 수집 + 알림 1사이클 |
 | `python -m app.main --once track` | 활성 트래킹 4기준 평가 1사이클 |
+| `python -m app.main --once drain` | pending 큐 일괄 발송 1사이클 |
 | `python -m app.report` | 등급별 평균 상승일 통계 |
 
 ## DB 스키마

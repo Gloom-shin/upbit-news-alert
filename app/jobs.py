@@ -1,8 +1,10 @@
-"""스케줄러가 실행하는 3개 잡.
+"""스케줄러가 실행하는 4개 잡.
 
-- price_job   : 1시간마다 상승 종목 후보 갱신
-- news_job    : 5분마다 RSS 수집 → 후보 종목과 매칭 → 등급 분류 → S/A급 알림
-- track_job   : 매일 자정에 활성 트래킹 4기준 평가 → 종료된 것 정리
+- price_job        : 1시간마다 상승 종목 후보 갱신
+- news_job         : 5분마다 RSS 수집 → 후보 종목과 매칭 → 등급 분류
+                     → S/A급 + 윈도우 안이면 즉시 발송, 윈도우 밖이면 pending
+- drain_queue_job  : 윈도우 시작 시각마다 pending 큐 일괄 발송
+- track_job        : 매일 자정에 활성 트래킹 4기준 평가 → 종료된 것 정리
 """
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ import logging
 from datetime import datetime
 from typing import Iterable
 
-from . import config, db, news, tracker
+from . import alert_window, config, db, news, tracker
 from .classifier import classify
 from .filter import find_uptrend_markets
 from .notifier import format_alert, send_email
@@ -63,8 +65,17 @@ def news_job() -> None:
     items = news.fetch_all()
     logger.info("[news_job] RSS %d건 수집", len(items))
 
+    now = datetime.now()
+    in_window = alert_window.is_in_window(now)
+    window_label = alert_window.current_window_label(now)
+    if in_window:
+        logger.info("[news_job] 알림 윈도우 %s — 즉시 발송 모드", window_label)
+    else:
+        logger.info("[news_job] 알림 윈도우 밖 — S/A 발견 시 pending 큐로 저장")
+
     grade_avg_days = _grade_avg_days_cache()
     sent = 0
+    pending = 0
     for item in items:
         matched = news.detect_symbols(item.full_text, candidate_symbols)
         if not matched:
@@ -92,30 +103,112 @@ def news_job() -> None:
                 "[news_job] 매칭 %s/%s [%s] %s",
                 cand["market"], symbol, cls.grade, item.title[:60],
             )
-            if cls.is_alert_worthy:
-                subject, body, is_html = format_alert(
-                    grade=cls.grade,
-                    symbol=symbol,
-                    market=cand["market"],
-                    headline=item.title,
-                    summary=item.summary,
-                    url=item.url,
-                    source=item.source,
-                    detected_price=cand["last_close"],
-                    avg_days_for_grade=grade_avg_days.get(cls.grade),
-                    run_days=cand.get("run_days"),
-                    reason=cls.reason,
-                )
-                if send_email(subject, body, html=is_html):
-                    db.mark_notified(event_id)
-                    db.open_price_tracking(
-                        news_event_id=event_id,
-                        symbol=symbol,
-                        market=cand["market"],
-                        entry_price=cand["last_close"],
-                    )
-                    sent += 1
-    logger.info("[news_job] 완료 — 알림 발송 %d건", sent)
+            if not cls.is_alert_worthy:
+                continue
+            if not in_window:
+                # pending 큐로만 적재 (notified=0 유지). drain_queue_job이 발송.
+                pending += 1
+                logger.info("[news_job] pending 적재 → %s/%s [%s]",
+                            cand["market"], symbol, cls.grade)
+                continue
+            ok = _send_one(
+                event_id=event_id,
+                grade=cls.grade,
+                symbol=symbol,
+                market=cand["market"],
+                headline=item.title,
+                summary=item.summary,
+                url=item.url,
+                source=item.source,
+                detected_price=cand["last_close"],
+                avg_days_for_grade=grade_avg_days.get(cls.grade),
+                run_days=cand.get("run_days"),
+                reason=cls.reason,
+            )
+            if ok:
+                sent += 1
+    logger.info("[news_job] 완료 — 즉시 발송 %d건, pending 적재 %d건", sent, pending)
+
+
+def _send_one(
+    *,
+    event_id: int,
+    grade: str,
+    symbol: str,
+    market: str,
+    headline: str,
+    summary: str,
+    url: str,
+    source: str,
+    detected_price: float | None,
+    avg_days_for_grade: float | None,
+    run_days: int | None,
+    reason: str,
+) -> bool:
+    """이메일 1건 발송 + DB 업데이트 (mark_notified + open_price_tracking).
+
+    윈도우 안 즉시 발송과 drain_queue_job 모두에서 사용.
+    """
+    subject, body, is_html = format_alert(
+        grade=grade,
+        symbol=symbol,
+        market=market,
+        headline=headline,
+        summary=summary,
+        url=url,
+        source=source,
+        detected_price=detected_price,
+        avg_days_for_grade=avg_days_for_grade,
+        run_days=run_days,
+        reason=reason,
+    )
+    if not send_email(subject, body, html=is_html):
+        return False
+    db.mark_notified(event_id)
+    if detected_price is not None:
+        db.open_price_tracking(
+            news_event_id=event_id,
+            symbol=symbol,
+            market=market,
+            entry_price=detected_price,
+        )
+    return True
+
+
+# ── 2.5) 큐 드레인 — 윈도우 시작 시각마다 pending S/A 일괄 발송 ────────
+
+
+def drain_queue_job() -> None:
+    logger.info("[drain_queue_job] 시작")
+    pending_rows = db.get_pending_alerts(within_hours=config.PENDING_TTL_HOURS)
+    if not pending_rows:
+        logger.info("[drain_queue_job] pending 없음")
+        return
+
+    grade_avg_days = _grade_avg_days_cache()
+    candidates = _active_candidates  # run_days 보강용 (없으면 None 허용)
+    sent = 0
+    for row in pending_rows:
+        symbol = row["symbol"]
+        cand = candidates.get(symbol) or {}
+        ok = _send_one(
+            event_id=row["id"],
+            grade=row["grade"],
+            symbol=symbol,
+            market=row["market"] or "",
+            headline=row["headline"],
+            summary=row["summary"] or "",
+            url=row["url"],
+            source=row["source"] or "",
+            detected_price=row["detected_price"],
+            avg_days_for_grade=grade_avg_days.get(row["grade"]),
+            run_days=cand.get("run_days"),
+            reason=row["classified_reason"] or "",
+        )
+        if ok:
+            sent += 1
+    logger.info("[drain_queue_job] 완료 — %d건 발송 (대기 %d건 중)",
+                sent, len(pending_rows))
 
 
 def _grade_avg_days_cache() -> dict[str, float]:
@@ -212,4 +305,5 @@ def run_once(name: str) -> None:
         "price": price_job,
         "news": news_job,
         "track": track_job,
+        "drain": drain_queue_job,
     }[name]()
