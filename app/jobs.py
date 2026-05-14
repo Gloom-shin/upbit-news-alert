@@ -73,11 +73,13 @@ def news_job() -> None:
     else:
         logger.info("[news_job] 알림 윈도우 밖 — S/A 발견 시 pending 큐로 저장")
 
+    # 사이클당 1번만 빌드 (예전: 뉴스 1건마다 /market/all 호출 → 429 폭주)
+    name_map = news.build_name_to_symbol_map(candidate_symbols)
     grade_avg_days = _grade_avg_days_cache()
     sent = 0
     pending = 0
     for item in items:
-        matched = news.detect_symbols(item.full_text, candidate_symbols)
+        matched = news.detect_symbols(item.full_text, candidate_symbols, name_map=name_map)
         if not matched:
             continue
         for symbol in matched:

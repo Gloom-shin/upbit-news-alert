@@ -109,9 +109,13 @@ _EXTRA_KOREAN_ALIASES: dict[str, str] = {
 }
 
 
-def _build_name_to_symbol_map(candidate_symbols: set[str]) -> dict[str, str]:
+def build_name_to_symbol_map(candidate_symbols: set[str]) -> dict[str, str]:
     """업비트 KRW 마켓 리스트에서 한글/영문 이름 → 심볼 동적 매핑 빌드.
-    candidate_symbols(현재 상승 후보)에 속한 것만 포함."""
+    candidate_symbols(현재 상승 후보)에 속한 것만 포함.
+
+    호출자가 사이클당 1번만 호출하여 detect_symbols에 전달해야 한다.
+    (예전: 뉴스 1건마다 호출 → /market/all 30회 폭주)
+    """
     name_map: dict[str, str] = {}
 
     # 1) Upbit가 제공하는 공식 korean_name / english_name
@@ -138,9 +142,22 @@ def _build_name_to_symbol_map(candidate_symbols: set[str]) -> dict[str, str]:
     return name_map
 
 
-def detect_symbols(text: str, candidate_symbols: set[str]) -> set[str]:
+# 하위 호환 alias (테스트/외부 코드가 이전 이름을 참조할 수 있음)
+_build_name_to_symbol_map = build_name_to_symbol_map
+
+
+def detect_symbols(
+    text: str,
+    candidate_symbols: set[str],
+    name_map: dict[str, str] | None = None,
+) -> set[str]:
     """텍스트에서 후보 종목 심볼/한글 정식명/영문명/별칭이 언급되었는지 검출.
-    반환: 매칭된 심볼 집합. 오탐 방지를 위해 단어 경계와 모호어 필터 적용."""
+
+    name_map: 호출자가 build_name_to_symbol_map으로 미리 만든 맵 (재사용 권장).
+    None이면 매 호출마다 빌드 (구버전 호환, 권장 X).
+
+    반환: 매칭된 심볼 집합. 오탐 방지를 위해 단어 경계와 모호어 필터 적용.
+    """
     matched: set[str] = set()
     upper = text.upper()
 
@@ -149,8 +166,9 @@ def detect_symbols(text: str, candidate_symbols: set[str]) -> set[str]:
         if re.search(rf"(?<![A-Z0-9]){re.escape(sym)}(?![A-Z0-9])", upper):
             matched.add(sym)
 
-    # 2) 한글/영문 이름 매칭 — 업비트 마켓 메타에서 동적으로 빌드
-    name_map = _build_name_to_symbol_map(candidate_symbols)
+    # 2) 한글/영문 이름 매칭 — 매핑은 호출자가 사이클당 1번 준비하는 게 정상
+    if name_map is None:
+        name_map = build_name_to_symbol_map(candidate_symbols)
     for name, sym in name_map.items():
         if name in _AMBIGUOUS_KOREAN_NAMES:
             continue
